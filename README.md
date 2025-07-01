@@ -6,12 +6,14 @@ Create a pg db wherever you like, and grab an openai api key
 
 Your .env should look like
 
+```
 OPENAI_API_KEY=
 PGDATABASE=
 PGUSER=
 PGPASSWORD=
 PGHOST=
 PGPORT=
+```
 
 ## setup your corpus
 
