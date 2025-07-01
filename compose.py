@@ -13,9 +13,20 @@ import sys
 import json
 import glob
 import random
+import logging
 from openai import OpenAI
 import psycopg2
 from psycopg2.extras import RealDictCursor
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+logger = logging.getLogger(__name__)
 
 # Load environment variables from .env if present
 try:
@@ -25,7 +36,7 @@ except ImportError:
     pass
 
 CORPUS_DIR = 'processed_corpus'
-STYLE_SNIPPET_CHAR_LIMIT = 1200  # Total chars of style context to pass in
+STYLE_SNIPPET_CHAR_LIMIT = 100000  # Total chars of style context to pass in
 SNIPPET_MIN_LEN = 200  # Minimum chars per snippet
 
 # DB connection settings (reuse from create_embeddings_and_upload.py)
@@ -74,6 +85,8 @@ if not description:
     print("No prompt provided. Exiting.")
     sys.exit(1)
 
+logger.info(f"User prompt: {description}")
+
 def get_db_connection():
     return psycopg2.connect(
         dbname=DB_NAME,
@@ -84,13 +97,16 @@ def get_db_connection():
     )
 
 def get_embedding(text, model=EMBEDDING_MODEL):
+    logger.info(f"Generating embedding for text (first 100 chars): {text[:100]}...")
     response = client.embeddings.create(
         input=[text],
         model=model
     )
+    logger.info(f"Embedding generated successfully using model: {model}")
     return response.data[0].embedding
 
 def get_top_style_snippets(prompt, top_k=TOP_K):
+    logger.info(f"Retrieving top {top_k} style snippets from vector database...")
     embedding = get_embedding(prompt)
     conn = get_db_connection()
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -104,7 +120,11 @@ def get_top_style_snippets(prompt, top_k=TOP_K):
         )
         rows = cur.fetchall()
     conn.close()
-    return [row['txt'] for row in rows]
+    snippets = [row['txt'] for row in rows]
+    logger.info(f"Retrieved {len(snippets)} complete snippets from database")
+    for i, snippet in enumerate(snippets, 1):
+        logger.info(f"Snippet {i} (length: {len(snippet)} chars, first 150 chars): {snippet[:150]}...")
+    return snippets
 
 # Get most relevant style snippets
 style_snippets = get_top_style_snippets(description)
@@ -113,6 +133,8 @@ if not style_snippets:
     sys.exit(1)
 
 style_context = '\n---\n'.join(style_snippets)
+logger.info(f"Final style context length: {len(style_context)} characters")
+logger.info(f"Style context preview (first 300 chars): {style_context[:300]}...")
 
 # Compose system prompt
 system_prompt = (
@@ -121,6 +143,9 @@ system_prompt = (
     "Be authentic to their tone, structure, and voice.\n\n"
     "USER'S WRITING SNIPPETS:\n" + style_context
 )
+
+logger.info(f"System prompt length: {len(system_prompt)} characters")
+logger.info("Calling GPT-4o API...")
 
 try:
     response = client.chat.completions.create(
@@ -132,8 +157,10 @@ try:
         max_tokens=1024,
         temperature=0.7
     )
+    logger.info("GPT-4o API call successful")
     print("\n---\nGenerated piece:\n")
     print(response.choices[0].message.content.strip())
 except Exception as e:
+    logger.error(f"Error generating piece: {e}")
     print(f"Error generating piece: {e}")
     sys.exit(1) 
